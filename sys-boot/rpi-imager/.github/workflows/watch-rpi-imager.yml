@@ -1,0 +1,115 @@
+name: Watch rpi-imager releases and open PR with new ebuild
+
+on:
+  schedule:
+    - cron: "0 5 * * *"     # daily at 06:12 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check-and-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get latest upstream release (non-prerelease)
+        id: latest
+        uses: pozetroninc/github-action-get-latest-release@v0.7.0
+        with:
+          repository: raspberrypi/rpi-imager
+          excludes: prerelease,draft
+
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Decide if we need a bump
+        id: decide
+        shell: bash
+        env:
+          EBUILD_DIR: sys-boot/rpi-imager
+          PKG: rpi-imager
+        run: |
+          set -euo pipefail
+          latest_tag="${{ steps.latest.outputs.release }}"
+          if [[ -z "$latest_tag" ]]; then
+            echo "No upstream tag found; exiting."
+            echo "should_bump=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Strip leading "v" if present
+          latest="${latest_tag#v}"
+          echo "Upstream latest release: $latest"
+
+          mkdir -p "$EBUILD_DIR"
+          shopt -s nullglob
+          existing=( "$EBUILD_DIR/$PKG-"*.ebuild )
+          shopt -u nullglob
+
+          if (( ${#existing[@]} == 0 )); then
+            echo "::error::No existing ebuilds found in $EBUILD_DIR. Add one manually first."
+            echo "should_bump=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # If the new ebuild already exists, nothing to do
+          new_ebuild="$EBUILD_DIR/$PKG-$latest.ebuild"
+          if [[ -f "$new_ebuild" ]]; then
+            echo "Ebuild already exists: $new_ebuild"
+            echo "should_bump=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Find the highest existing version to clone from
+          # (Sort naturally by version and take the last)
+          last_ebuild="$(printf '%s\n' "${existing[@]}" | sed -E 's#.*/##' | sort -V | tail -n1)"
+          echo "last_ebuild=$last_ebuild" >> "$GITHUB_OUTPUT"
+          echo "new_ebuild=$new_ebuild"   >> "$GITHUB_OUTPUT"
+          echo "latest=$latest"           >> "$GITHUB_OUTPUT"
+          echo "should_bump=true"         >> "$GITHUB_OUTPUT"
+
+      - name: Create new ebuild file (copy last -> new version)
+        if: steps.decide.outputs.should_bump == 'true'
+        shell: bash
+        env:
+          EBUILD_DIR: sys-boot/rpi-imager
+        run: |
+          set -euo pipefail
+          last="${{ steps.decide.outputs.last_ebuild }}"
+          new="${{ steps.decide.outputs.new_ebuild }}"
+          echo "Copying $last -> $new"
+          cp "$EBUILD_DIR/$last" "$new"
+
+          # Optional: ensure KEYWORDS are present (some people forget)
+          if ! grep -q '^KEYWORDS=' "$new"; then
+            echo 'KEYWORDS="~amd64 ~arm ~arm64"' >> "$new"
+          fi
+
+          # Optional: ensure HOMEPAGE/SRC_URI still point at upstream (they should)
+          # No in-file version changes needed; ebuilds use ${PV}, the filename sets PV.
+
+      - name: Create PR
+        if: steps.decide.outputs.should_bump == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: "autobump/rpi-imager-v${{ steps.decide.outputs.latest }}"
+          commit-message: "sys-boot/rpi-imager: add rpi-imager-${{ steps.decide.outputs.latest }}.ebuild"
+          title: "sys-boot/rpi-imager: bump to v${{ steps.decide.outputs.latest }}"
+          body: |
+            Upstream release detected: **v${{ steps.decide.outputs.latest }}**  
+            This PR adds: `sys-boot/rpi-imager/rpi-imager-${{ steps.decide.outputs.latest }}.ebuild`
+
+            > Notes
+            > - This is a straight copy of the previous highest ebuild.
+            > - Run locally:
+            >   ```
+            >   ebuild sys-boot/rpi-imager/rpi-imager-${{ steps.decide.outputs.latest }}.ebuild manifest
+            >   emerge -av1 sys-boot/rpi-imager
+            >   ```
+            > - If upstream changed build deps (e.g., Qt modules), tweak the new ebuild before merging.
+          labels: |
+            upstream
+            autobump
