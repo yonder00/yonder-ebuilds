@@ -1,0 +1,27 @@
+# --- Portage / egencache outputs (do NOT version) ---
+/metadata/md5-cache/
+/metadata/cache/
+/metadata/pkg_desc_index
+/metadata/timestamp
+/metadata/timestamp.*
+
+# --- Safety: never store build artifacts in the repo ---
+/distfiles/
+/packages/
+
+# --- Tool logs & scratch ---
+repoman.log
+pkgcheck.log
+.pkgcheck*
+.egencache-*
+
+# --- Editor/OS cruft ---
+*~
+.*.swp
+.*.swo
+.#*
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.direnv/
