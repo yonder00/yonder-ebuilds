@@ -1,3 +1,6 @@
 # Personal ebuild repository
 
-Only one package for now
+sys-boot/rpi-imager
+sys-boot/etcher-bin
+
+Feel free to use if you find them useful
